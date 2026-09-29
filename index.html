@@ -211,7 +211,7 @@ aside{overflow:auto;border-left:1px solid var(--line);background:var(--bg);paddi
       <div class="hours" id="hours"></div>
     </div>
 
-    <p class="foot">Wind at 10 m and wave forecasts from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0). Map © OpenStreetMap contributors, © CARTO. Click a spot on the map to load wind there; click an arrow to see its forecast.</p>
+    <p class="foot">Wind at 10 m and wave forecasts from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0). Map tiles © Esri, HERE, Garmin, © OpenStreetMap contributors. Click a spot on the map to load wind there; click an arrow to see its forecast.</p>
   </aside>
 </main>
 
@@ -288,14 +288,20 @@ const TZ_DEFAULT = {
 /* ---------- Map ---------- */
 const map = L.map('map', { zoomControl:true, worldCopyJump:true }).setView([52.1,4.2], 9);
 const dark = matchMedia('(prefers-color-scheme: dark)');
-let tiles;
+// Esri gray canvas: free without an API key (CARTO now serves "API key required" tiles off localhost)
+let tiles = [];
 function setTiles(){
-  if (tiles) map.removeLayer(tiles);
-  const style = dark.matches ? 'dark_all' : 'rastertiles/voyager';
-  tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`, {
-    subdomains:'abcd', maxZoom:18,
-    attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a> · Data <a href="https://open-meteo.com/">Open-Meteo</a>'
-  }).addTo(map);
+  tiles.forEach(t => map.removeLayer(t));
+  const shade = dark.matches ? 'Dark' : 'Light';
+  const esri = layer => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${shade}_Gray_${layer}/MapServer/tile/{z}/{y}/{x}`;
+  tiles = [
+    L.tileLayer(esri('Base'), {
+      maxZoom:16,
+      attribution:'Tiles © <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, © OpenStreetMap contributors · Data <a href="https://open-meteo.com/">Open-Meteo</a>'
+    }),
+    L.tileLayer(esri('Reference'), { maxZoom:16 })
+  ];
+  tiles.forEach(t => t.addTo(map));
 }
 setTiles();
 dark.addEventListener?.('change', setTiles);
