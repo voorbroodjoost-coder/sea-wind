@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sea Wind</title>
+<meta name="description" content="Current and hourly forecast wind over the sea near you, on a map.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#EDF2F4; --panel:#FFFFFF; --ink:#0F2430; --muted:#5A6E78; --line:#D4DEE2;
+  --accent:#0B6E8A; --accent-soft:#D6EAF0; --night:rgba(15,36,48,.06); --past:rgba(237,242,244,.55);
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0A1318; --panel:#101D24; --ink:#E2EBEE; --muted:#8CA1AA; --line:#21333C;
+    --accent:#52B6D2; --accent-soft:#16323D; --night:rgba(0,0,0,.28); --past:rgba(10,19,24,.5);
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 var(--body);display:grid;grid-template-rows:auto minmax(0,1fr)}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Header */
+.top{display:flex;align-items:center;gap:12px 20px;flex-wrap:wrap;padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top,0px));background:var(--panel);border-bottom:1px solid var(--line);position:relative;z-index:1100}
+.brand{display:flex;align-items:baseline;gap:10px;margin-right:auto;min-width:0}
+.brand h1{font:700 26px/1 var(--display);letter-spacing:.02em;margin:0;text-transform:uppercase}
+.brand .place{font:500 13px/1.2 var(--body);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.search{position:relative}
+.search input{width:220px;max-width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.results{position:absolute;top:calc(100% + 4px);left:0;right:0;min-width:260px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.18);list-style:none;margin:0;padding:4px;z-index:1200}
+.results button{display:block;width:100%;text-align:left;border:0;background:none;padding:7px 8px;border-radius:4px}
+.results button:hover,.results button:focus-visible{background:var(--accent-soft)}
+.results small{color:var(--muted)}
+.btn{border:1px solid var(--line);background:var(--panel);padding:7px 11px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn svg{width:16px;height:16px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:none;padding:7px 10px;font:500 12px/1 var(--mono)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--panel)}
+
+/* Main layout */
+main{display:grid;grid-template-columns:minmax(0,1fr) 400px;min-height:0}
+.mapwrap{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0}
+.mapbox{position:relative;min-height:0}
+#map{position:absolute;inset:0;background:var(--bg)}
+.overlay{position:absolute;left:50%;top:16px;transform:translateX(-50%);z-index:900;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 14px;font-weight:500;box-shadow:0 4px 16px rgba(0,0,0,.15);max-width:calc(100% - 32px);text-align:center}
+.overlay.err{border-color:#d9534f}
+
+.timebar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 14px;align-items:center;padding:10px 16px 12px;background:var(--panel);border-top:1px solid var(--line)}
+.timebar .when{font:600 20px/1 var(--display);letter-spacing:.02em;min-width:150px}
+.timebar .when small{display:block;font:500 11px/1.3 var(--mono);color:var(--muted);letter-spacing:0;margin-top:3px;text-transform:uppercase}
+.slider{display:grid;gap:4px}
+.slider input{width:100%;accent-color:var(--accent);margin:0}
+.days{display:flex;font:500 11px/1 var(--mono);color:var(--muted);text-transform:uppercase}
+.days span{flex:1 1 0;border-left:1px solid var(--line);padding-left:4px;overflow:hidden;white-space:nowrap}
+.tb-actions{display:flex;gap:6px}
+.legend{grid-column:1/-1;display:flex;align-items:center;gap:10px;font:500 11px/1 var(--mono);color:var(--muted)}
+.legend .bar{flex:1;max-width:420px;height:8px;border-radius:4px}
+.legend .ticks{display:flex;justify-content:space-between;flex:1;max-width:420px}
+
+/* Wind arrows */
+.wind-ic{background:none;border:0}
+.wa{position:relative;width:44px;height:44px;cursor:pointer}
+.wa svg{position:absolute;left:7px;top:4px;width:30px;height:30px;transition:transform .25s ease}
+.wa path{fill:var(--c);stroke:rgba(10,25,33,.75);stroke-width:1.3;stroke-linejoin:round}
+.wa b{position:absolute;left:50%;bottom:0;transform:translateX(-50%);font:600 12px/1 var(--display);background:var(--panel);color:var(--ink);padding:1px 4px;border-radius:3px;box-shadow:0 0 0 1px var(--line)}
+.wa.sel::before{content:"";position:absolute;inset:-2px;border-radius:50%;border:2px solid var(--ink);background:rgba(255,255,255,.12)}
+.me-dot{width:14px;height:14px;border-radius:50%;background:var(--accent);border:3px solid var(--panel);box-shadow:0 0 0 1px var(--accent)}
+.leaflet-popup-content{font:13px/1.4 var(--body)}
+.leaflet-container{font-family:var(--body)}
+
+/* Side panel */
+aside{overflow:auto;border-left:1px solid var(--line);background:var(--bg);padding:16px;display:flex;flex-direction:column;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
+.eyebrow{font:500 11px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;display:flex;justify-content:space-between;gap:8px}
+.eyebrow .live{color:var(--accent)}
+.now{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
+.big{font:600 64px/0.9 var(--display);font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:6px}
+.big small{font:500 18px/1 var(--display);color:var(--muted)}
+.sub{margin-top:8px;color:var(--muted);font-size:13px}
+.sub strong{color:var(--ink);font-weight:600}
+.compass{width:96px;height:96px}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.facts dt{font:500 10.5px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.facts dd{margin:3px 0 0;font:600 20px/1.1 var(--display);font-variant-numeric:tabular-nums}
+.facts dd small{font:500 12px var(--display);color:var(--muted)}
+.bft{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-weight:500;font-size:13px;padding:3px 9px 3px 4px;border-radius:99px;background:var(--accent-soft)}
+.bft i{font:700 12px/1 var(--display);font-style:normal;background:var(--c);color:#0F2430;border-radius:99px;padding:3px 7px}
+.meta{font:12px/1.4 var(--mono);color:var(--muted);margin-top:10px}
+
+.chart{width:100%;touch-action:pan-y;cursor:crosshair;display:block}
+.chart text{font:500 10px var(--mono);fill:var(--muted)}
+.chart .daylbl{font:600 12px var(--display);fill:var(--ink);text-transform:uppercase;letter-spacing:.04em}
+.chart-key{display:flex;gap:14px;font:12px var(--body);color:var(--muted);margin-top:6px;flex-wrap:wrap}
+.chart-key span{display:inline-flex;align-items:center;gap:6px}
+.chart-key i{display:inline-block;width:18px;height:3px;border-radius:2px}
+
+.hours{display:flex;gap:4px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
+.hour{flex:0 0 52px;border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;font-variant-numeric:tabular-nums}
+.hour.cur{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.hour.past{opacity:.55}
+.hour .h{font:500 11px/1 var(--mono);color:var(--muted)}
+.hour svg{width:22px;height:22px}
+.hour .s{font:600 17px/1 var(--display)}
+.hour .g{font:500 11px/1 var(--mono);color:var(--muted)}
+.hour .w{font:500 10px/1 var(--mono);color:var(--muted)}
+.foot{font-size:12px;color:var(--muted);margin-top:auto}
+.foot a{color:inherit}
+
+@media (max-width: 900px){
+  body{display:block;height:auto}
+  main{display:block}
+  .mapwrap{height:auto}
+  .mapbox{height:56vh;min-height:320px}
+  aside{border-left:0;overflow:visible}
+  .search input{width:170px}
+}
+@media (max-width: 520px){
+  .timebar{grid-template-columns:minmax(0,1fr) auto}
+  .timebar .slider{grid-column:1/-1;grid-row:2}
+  .legend{grid-row:3}
+  .days span:nth-child(n+6){display:none}
+  .big{font-size:56px}
+}
+@media (prefers-reduced-motion: reduce){ .wa svg{transition:none} }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><h1>Sea Wind</h1><span class="place" id="place">Finding your location…</span></div>
+  <div class="tools">
+    <form class="search" id="searchForm" role="search" autocomplete="off">
+      <input id="q" type="search" placeholder="Search a coastal place" aria-label="Search a place">
+      <ul class="results" id="results" hidden></ul>
+    </form>
+    <button class="btn" id="locate" type="button" title="Use my location">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>My location
+    </button>
+    <div class="seg" id="units" role="group" aria-label="Wind unit">
+      <button type="button" data-u="kn">kn</button><button type="button" data-u="bft">Bft</button><button type="button" data-u="ms">m/s</button><button type="button" data-u="kmh">km/h</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="mapwrap">
+    <div class="mapbox">
+      <div id="map" aria-label="Map of wind over the sea"></div>
+      <div class="overlay" id="status">Loading wind…</div>
+    </div>
+    <div class="timebar">
+      <div class="when" id="when">–<small id="whenSub">&nbsp;</small></div>
+      <div class="slider">
+        <input type="range" id="slider" min="0" max="167" value="0" aria-label="Forecast hour">
+        <div class="days" id="days"></div>
+      </div>
+      <div class="tb-actions">
+        <button class="btn" id="play" type="button" aria-label="Play forecast">
+          <svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><path d="M7 5l12 7-12 7z"/></svg>
+        </button>
+        <button class="btn" id="nowBtn" type="button">Now</button>
+      </div>
+      <div class="legend"><span id="legendUnit">kn</span><div style="flex:1;max-width:420px;display:grid;gap:3px"><div class="bar" id="legendBar"></div><div class="ticks" id="legendTicks"></div></div></div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card" id="nowCard">
+      <p class="eyebrow"><span id="cardTitle">Now</span><span id="cardPoint"></span></p>
+      <div class="now">
+        <div>
+          <div class="big"><span id="spd">–</span><small id="spdUnit">kn</small></div>
+          <div class="sub">from <strong id="dirTxt">–</strong> · gusts <strong id="gust">–</strong></div>
+          <div class="bft" id="bftTag"><i id="bftNum">–</i><span id="bftName">–</span></div>
+        </div>
+        <svg class="compass" id="compass" viewBox="-50 -50 100 100" aria-hidden="true"></svg>
+      </div>
+      <dl class="facts">
+        <div><dt>Waves</dt><dd id="wave">–</dd></div>
+        <div><dt>Period</dt><dd id="period">–</dd></div>
+        <div><dt>Today max</dt><dd id="dayMax">–</dd></div>
+      </dl>
+      <div class="meta" id="pointMeta"></div>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow"><span>7-day wind at selected point</span><span>tap to scrub</span></p>
+      <div id="chartBox"></div>
+      <div class="chart-key">
+        <span><i style="background:linear-gradient(90deg,#5fb3c9,#3fae7a,#f2c230)"></i>Wind</span>
+        <span><i style="background:var(--muted);opacity:.5"></i>Gusts</span>
+        <span><i style="background:var(--night);border:1px solid var(--line);height:10px"></i>Night</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow"><span id="hoursTitle">Hour by hour</span><span id="hoursUnit"></span></p>
+      <div class="hours" id="hours"></div>
+    </div>
+
+    <p class="foot">Wind at 10 m and wave forecasts from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0). Map © OpenStreetMap contributors, © CARTO. Click a spot on the map to load wind there; click an arrow to see its forecast.</p>
+  </aside>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const store = {
+  get(k){ try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k,v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+/* ---------- Units & scales ---------- */
+const FACT = { kn:1, ms:0.514444, kmh:1.852 };
+const UNIT_LABEL = { kn:'kn', bft:'Bft', ms:'m/s', kmh:'km/h' };
+const BFT_MS = [0.5,1.6,3.4,5.5,8.0,10.8,13.9,17.2,20.8,24.5,28.5,32.7];
+const BFT_NAME = ['Calm','Light air','Light breeze','Gentle breeze','Moderate breeze','Fresh breeze','Strong breeze','Near gale','Gale','Strong gale','Storm','Violent storm','Hurricane force'];
+const DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const STOPS = [[0,'#a9d3e6'],[5,'#5fb3c9'],[10,'#3fae7a'],[15,'#a8c93a'],[20,'#f2c230'],[25,'#f08a24'],[30,'#e04b3a'],[40,'#c2338f'],[50,'#7a3fb8']];
+
+let unit = store.get('seawind.unit') || 'kn';
+const bft = kn => { const ms = kn*0.514444; let b = 0; while (b < 12 && ms >= BFT_MS[b]) b++; return b; };
+const conv = kn => unit === 'bft' ? bft(kn) : kn*FACT[unit];
+const fmt = kn => kn == null ? '–' : unit === 'ms' ? conv(kn).toFixed(1) : String(Math.round(conv(kn)));
+const fmtShort = kn => kn == null ? '–' : String(Math.round(conv(kn)));
+const dirName = d => DIRS[Math.round(d/22.5) % 16];
+function hex2rgb(h){ return [1,3,5].map(i => parseInt(h.slice(i,i+2),16)); }
+function color(kn){
+  if (kn == null) return '#999';
+  if (kn <= STOPS[0][0]) return STOPS[0][1];
+  for (let i = 1; i < STOPS.length; i++){
+    if (kn <= STOPS[i][0]){
+      const [k0,c0] = STOPS[i-1], [k1,c1] = STOPS[i], t = (kn-k0)/(k1-k0);
+      const a = hex2rgb(c0), b = hex2rgb(c1);
+      return 'rgb(' + a.map((v,j) => Math.round(v + (b[j]-v)*t)).join(',') + ')';
+    }
+  }
+  return STOPS[STOPS.length-1][1];
+}
+const ARROW = 'M0,-11 L7,6 L0,2 L-7,6Z';
+const arrowSVG = (dir, fill, size=22) =>
+  `<svg viewBox="-12 -12 24 24" width="${size}" height="${size}"><path d="${ARROW}" transform="rotate(${(dir+180)%360})" fill="${fill}" stroke="rgba(10,25,33,.6)" stroke-width="1.2" stroke-linejoin="round"/></svg>`;
+
+/* ---------- Time helpers (API returns local wall-clock times) ---------- */
+const asDate = s => new Date(s + (s.length === 16 ? ':00Z' : 'Z'));
+const dtf = o => new Intl.DateTimeFormat('en-GB', { timeZone:'UTC', ...o });
+const fDay = dtf({ weekday:'short', day:'numeric' });
+const fLong = dtf({ weekday:'short', day:'numeric', month:'short' });
+const fHM = dtf({ hour:'2-digit', minute:'2-digit', hour12:false });
+const hourDiff = (a,b) => (asDate(b) - asDate(a)) / 3600e3;
+
+/* ---------- Geo ---------- */
+function km(a,b){
+  const R = 6371, r = Math.PI/180, dLa = (b.lat-a.lat)*r, dLo = (b.lon-a.lon)*r;
+  const h = Math.sin(dLa/2)**2 + Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+const fmtCoord = p => `${Math.abs(p.lat).toFixed(2)}°${p.lat>=0?'N':'S'} ${Math.abs(p.lon).toFixed(2)}°${p.lon>=0?'E':'W'}`;
+const N = 11, HALF = 5, STEP = 0.11; // ~12 km spacing, ~60 km radius
+function grid(c){
+  const pts = [], dLon = STEP / Math.cos(c.lat*Math.PI/180);
+  for (let i = -HALF; i <= HALF; i++) for (let j = -HALF; j <= HALF; j++)
+    pts.push({ gi:i, gj:j, lat: +(c.lat + i*STEP).toFixed(4), lon: +(c.lon + j*dLon).toFixed(4) });
+  return pts;
+}
+const TZ_DEFAULT = {
+  'Europe/Madrid':{lat:41.37,lon:2.20,name:'Barcelona'},
+  'Europe/Amsterdam':{lat:52.11,lon:4.27,name:'Scheveningen'},
+  'Europe/Lisbon':{lat:38.69,lon:-9.30,name:'Lisbon coast'},
+  'Europe/London':{lat:50.80,lon:-1.10,name:'Portsmouth'},
+  'Europe/Paris':{lat:43.29,lon:5.35,name:'Marseille'},
+};
+
+/* ---------- Map ---------- */
+const map = L.map('map', { zoomControl:true, worldCopyJump:true }).setView([52.1,4.2], 9);
+const dark = matchMedia('(prefers-color-scheme: dark)');
+let tiles;
+function setTiles(){
+  if (tiles) map.removeLayer(tiles);
+  const style = dark.matches ? 'dark_all' : 'rastertiles/voyager';
+  tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`, {
+    subdomains:'abcd', maxZoom:18,
+    attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a> · Data <a href="https://open-meteo.com/">Open-Meteo</a>'
+  }).addTo(map);
+}
+setTiles();
+dark.addEventListener?.('change', setTiles);
+const arrowLayer = L.layerGroup().addTo(map);
+let meMarker = null;
+
+map.on('click', e => {
+  const b = document.createElement('button');
+  b.className = 'btn'; b.type = 'button'; b.textContent = 'Show wind around here';
+  const pop = L.popup().setLatLng(e.latlng).setContent(b).openOn(map);
+  b.onclick = () => { map.closePopup(pop); setLocation({ lat:e.latlng.lat, lon:e.latlng.lng, name:fmtCoord({lat:e.latlng.lat, lon:e.latlng.lng}) }); };
+});
+map.on('zoomend', applyDensity);
+
+/* ---------- State ---------- */
+let loc = null, D = null, idx = 0, sel = 0, timer = null, loadSeq = 0;
+const status = (msg, err) => { const s = $('#status'); s.hidden = !msg; s.textContent = msg || ''; s.classList.toggle('err', !!err); };
+
+async function getJSON(url){
+  const r = await fetch(url);
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(j?.reason || `Request failed (${r.status})`);
+  return j;
+}
+const arr = x => Array.isArray(x) ? x : [x];
+
+async function load(){
+  const seq = ++loadSeq;
+  status('Loading wind…');
+  const g = grid(loc);
+  const la = g.map(p => p.lat).join(','), lo = g.map(p => p.lon).join(',');
+  const fcURL = `https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}`
+    + `&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m`
+    + `&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&daily=sunrise,sunset`
+    + `&wind_speed_unit=kn&forecast_days=7&timezone=auto`;
+  const maURL = `https://marine-api.open-meteo.com/v1/marine?latitude=${la}&longitude=${lo}`
+    + `&hourly=wave_height,wave_period&forecast_days=7&timezone=auto`;
+  let fc, ma;
+  try {
+    [fc, ma] = await Promise.all([getJSON(fcURL), getJSON(maURL).catch(() => null)]);
+  } catch (e) {
+    if (seq === loadSeq) status('Could not load the forecast: ' + e.message + '. Check your connection and try again.', true);
+    return;
+  }
+  if (seq !== loadSeq) return;
+  fc = arr(fc); ma = ma ? arr(ma) : null;
+
+  const pts = g.map((p,k) => {
+    const f = fc[k], m = ma?.[k];
+    const wh = m?.hourly?.wave_height;
+    const marine = !!(wh && wh.some(v => v != null));
+    return { ...p, f, m, marine, flat: Math.abs(f.elevation ?? 99) < 1 };
+  });
+  let sea = pts.filter(p => p.marine && p.flat);
+  if (!sea.length) sea = pts.filter(p => p.marine);
+  if (!sea.length && !ma) sea = pts.filter(p => p.flat);
+  if (!sea.length){
+    arrowLayer.clearLayers(); D = null;
+    status('No sea within about 60 km of this spot. Search for a coastal place or click the map near the sea.', true);
+    map.setView([loc.lat, loc.lon], 8);
+    return;
+  }
+  const times = fc[0].hourly.time;
+  const cur = fc[0].current?.time || times[0];
+  let nowIdx = times.indexOf(cur.slice(0,13) + ':00');
+  if (nowIdx < 0) nowIdx = 0;
+  // marine hour index lookup per point
+  sea.forEach(p => {
+    const mt = p.m?.hourly?.time || [];
+    p.mIdx = new Map(mt.map((t,i) => [t,i]));
+  });
+  // nearest sea point to chosen location
+  let best = 0, bd = Infinity;
+  sea.forEach((p,k) => { const d = km(loc,p); if (d < bd){ bd = d; best = k; } });
+  D = { times, nowIdx, sea, current: cur };
+  sel = best;
+  drawMarkers();
+  map.fitBounds(L.latLngBounds(sea.map(p => [p.lat,p.lon])).pad(0.15), { maxZoom: 10 });
+  setupSlider();
+  status('');
+  setIdx(nowIdx);
+}
+
+/* ---------- Markers ---------- */
+let markers = [];
+function drawMarkers(){
+  arrowLayer.clearLayers();
+  markers = D.sea.map((p,k) => {
+    const m = L.marker([p.lat,p.lon], {
+      icon: L.divIcon({ className:'wind-ic', html:'<div class="wa"><svg viewBox="-12 -12 24 24"><path d="'+ARROW+'"/></svg><b></b></div>', iconSize:[44,44], iconAnchor:[22,20] }),
+      keyboard:true, title:'Wind forecast at this point'
+    });
+    m.on('click', () => { sel = k; render(); });
+    m.addTo(arrowLayer);
+    return m;
+  });
+  if (meMarker) map.removeLayer(meMarker);
+  meMarker = L.marker([loc.lat, loc.lon], { icon: L.divIcon({ className:'wind-ic', html:'<div class="me-dot"></div>', iconSize:[14,14] }), interactive:false, zIndexOffset:-100 }).addTo(map);
+  applyDensity();
+}
+function applyDensity(){
+  if (!D) return;
+  const stride = 2 ** Math.max(0, 9 - map.getZoom());
+  markers.forEach((m,k) => {
+    const p = D.sea[k], el = m.getElement();
+    if (!el) return;
+    el.style.display = (k === sel || (p.gi % stride === 0 && p.gj % stride === 0)) ? '' : 'none';
+  });
+}
+function valuesAt(p, i){
+  const h = p.f.hourly;
+  let spd = h.wind_speed_10m[i], dir = h.wind_direction_10m[i], gust = h.wind_gusts_10m[i];
+  if (i === D.nowIdx && p.f.current){ // use 15-minute "current" values for now
+    const c = p.f.current;
+    spd = c.wind_speed_10m ?? spd; dir = c.wind_direction_10m ?? dir; gust = c.wind_gusts_10m ?? gust;
+  }
+  const mi = p.mIdx.get(D.times[i]);
+  const wave = mi != null ? p.m.hourly.wave_height[mi] : null;
+  const period = mi != null ? p.m.hourly.wave_period?.[mi] : null;
+  return { spd, dir, gust, wave, period };
+}
+function updateMarkers(){
+  markers.forEach((m,k) => {
+    const el = m.getElement(); if (!el) return;
+    const v = valuesAt(D.sea[k], idx), wa = el.firstChild;
+    wa.style.setProperty('--c', color(v.spd));
+    wa.classList.toggle('sel', k === sel);
+    wa.querySelector('svg').style.transform = `rotate(${(v.dir+180)%360}deg)`;
+    wa.querySelector('b').textContent = fmtShort(v.spd);
+    m.setZIndexOffset(k === sel ? 1000 : 0);
+  });
+  applyDensity();
+}
+
+/* ---------- Slider ---------- */
+function setupSlider(){
+  const s = $('#slider'); s.max = D.times.length - 1;
+  const days = [];
+  D.times.forEach((t,i) => { if (t.endsWith('T00:00')) days.push(fDay.format(asDate(t))); });
+  $('#days').innerHTML = days.map(d => `<span>${d}</span>`).join('');
+}
+$('#slider').addEventListener('input', e => { stop(); setIdx(+e.target.value); });
+$('#nowBtn').addEventListener('click', () => { stop(); if (D) setIdx(D.nowIdx); });
+$('#play').addEventListener('click', () => timer ? stop() : play());
+function play(){
+  if (!D) return;
+  if (idx >= D.times.length - 1) setIdx(D.nowIdx);
+  timer = setInterval(() => { if (idx >= D.times.length - 1) stop(); else setIdx(idx + 1); }, 450);
+  $('#playIcon').innerHTML = '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
+  $('#play').setAttribute('aria-label','Pause');
+}
+function stop(){
+  clearInterval(timer); timer = null;
+  $('#playIcon').innerHTML = '<path d="M7 5l12 7-12 7z"/>';
+  $('#play').setAttribute('aria-label','Play forecast');
+}
+function setIdx(i){
+  if (!D) return;
+  idx = Math.max(0, Math.min(D.times.length - 1, i));
+  $('#slider').value = idx;
+  render();
+}
+
+/* ---------- Render ---------- */
+function render(){
+  if (!D) return;
+  const t = D.times[idx], isNow = idx === D.nowIdx;
+  const tShow = isNow ? D.current : t;
+  $('#when').firstChild.nodeValue = isNow ? 'Now · ' + fHM.format(asDate(tShow)) : fLong.format(asDate(t)) + ' ' + fHM.format(asDate(t));
+  const ahead = Math.round(hourDiff(D.times[D.nowIdx], t));
+  $('#whenSub').textContent = isNow ? 'current conditions' : ahead > 0 ? `in ${ahead} h` : `${-ahead} h ago`;
+  updateMarkers();
+  renderCard(isNow);
+  drawChart();
+  renderHours();
+  renderLegend();
+}
+
+function renderCard(isNow){
+  const p = D.sea[sel], v = valuesAt(p, idx);
+  $('#cardTitle').innerHTML = isNow ? '<span class="live">● Now</span>' : fLong.format(asDate(D.times[idx])) + ', ' + fHM.format(asDate(D.times[idx]));
+  $('#cardPoint').textContent = fmtCoord(p);
+  $('#spd').textContent = fmt(v.spd);
+  $('#spdUnit').textContent = UNIT_LABEL[unit];
+  $('#dirTxt').textContent = `${dirName(v.dir)} (${Math.round(v.dir)}°)`;
+  $('#gust').textContent = fmt(v.gust) + ' ' + UNIT_LABEL[unit];
+  const b = bft(v.spd);
+  $('#bftTag').style.setProperty('--c', color(v.spd));
+  $('#bftNum').textContent = b + ' Bft';
+  $('#bftName').textContent = BFT_NAME[b];
+  $('#wave').innerHTML = v.wave != null ? v.wave.toFixed(1) + ' <small>m</small>' : '–';
+  $('#period').innerHTML = v.period != null ? Math.round(v.period) + ' <small>s</small>' : '–';
+  // max wind for the calendar day of idx
+  const day = D.times[idx].slice(0,10);
+  let mx = 0; D.times.forEach((t,i) => { if (t.startsWith(day)) mx = Math.max(mx, p.f.hourly.wind_speed_10m[i] ?? 0); });
+  $('#dayMax').innerHTML = fmt(mx) + ' <small>' + UNIT_LABEL[unit] + '</small>';
+  $('#dayMax').previousElementSibling.textContent = day === D.times[D.nowIdx].slice(0,10) ? 'Today max' : fDay.format(asDate(D.times[idx])) + ' max';
+  const d = km(loc, p);
+  $('#pointMeta').textContent = `Sea point ${d < 1 ? '<1' : d.toFixed(0)} km from ${loc.name || 'your spot'} · updated ${fHM.format(asDate(D.current))}`;
+  // compass
+  const ticks = [...Array(16)].map((_,i) => {
+    const a = i*22.5*Math.PI/180, r1 = i%4 ? 40 : 36, x1 = Math.sin(a)*r1, y1 = -Math.cos(a)*r1, x2 = Math.sin(a)*44, y2 = -Math.cos(a)*44;
+    return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--muted)" stroke-width="${i%4?1:1.6}"/>`;
+  }).join('');
+  const lbl = ['N','E','S','W'].map((s,i) => { const a = i*Math.PI/2; return `<text x="${(Math.sin(a)*27).toFixed(1)}" y="${(-Math.cos(a)*27+4).toFixed(1)}" text-anchor="middle" style="font:600 11px var(--display);fill:var(--muted)">${s}</text>`; }).join('');
+  $('#compass').innerHTML = `<circle r="46" fill="none" stroke="var(--line)" stroke-width="1.5"/>${ticks}${lbl}
+    <g transform="rotate(${(v.dir+180)%360})" style="transition:transform .3s"><path d="M0,-34 L9,10 L0,4 L-9,10Z" fill="${color(v.spd)}" stroke="var(--ink)" stroke-width="1.4" stroke-linejoin="round"/><line x1="0" y1="4" x2="0" y2="34" stroke="var(--ink)" stroke-width="1.6" stroke-dasharray="2 3"/></g>`;
+}
+
+function renderLegend(){
+  const maxKn = 45, stops = STOPS.filter(s => s[0] <= maxKn);
+  $('#legendBar').style.background = `linear-gradient(90deg, ${stops.map(s => `${s[1]} ${(s[0]/maxKn*100).toFixed(1)}%`).join(',')}, ${color(maxKn)} 100%)`;
+  $('#legendUnit').textContent = UNIT_LABEL[unit];
+  $('#legendTicks').innerHTML = [0,10,20,30,40].map(k => `<span>${fmtShort(k)}</span>`).join('');
+}
+
+function drawChart(){
+  const box = $('#chartBox'), p = D.sea[sel], h = p.f.hourly, n = D.times.length;
+  const W = Math.max(280, box.clientWidth || 360), H = 210, L_ = 30, R_ = 6, T_ = 10, B_ = 52;
+  const x = i => L_ + i*(W-L_-R_)/(n-1);
+  const vals = h.wind_speed_10m.map(v => conv(v ?? 0)), gusts = h.wind_gusts_10m.map(v => conv(v ?? 0));
+  const top = Math.max(...gusts, ...vals, unit === 'bft' ? 4 : 1);
+  const stepC = [1,2,5,10,20,50].find(s => top/s <= 5) || 100;
+  const yMax = Math.ceil(top/stepC)*stepC;
+  const y = v => T_ + (H-T_-B_)*(1 - v/yMax);
+  let s = '';
+  // night shading
+  const dly = p.f.daily, t0 = D.times[0];
+  if (dly?.sunrise){
+    const night = [[-1, hourDiff(t0, dly.sunrise[0])]];
+    dly.sunset.forEach((ss,d) => night.push([hourDiff(t0, ss), dly.sunrise[d+1] ? hourDiff(t0, dly.sunrise[d+1]) : n]));
+    night.forEach(([a,b]) => { a = Math.max(0,a); b = Math.min(n-1,b); if (b > a) s += `<rect x="${x(a).toFixed(1)}" y="${T_}" width="${(x(b)-x(a)).toFixed(1)}" height="${H-T_-B_}" fill="var(--night)"/>`; });
+  }
+  // grid
+  for (let v = 0; v <= yMax; v += stepC){
+    s += `<line x1="${L_}" x2="${W-R_}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)" stroke-width="1"/>`;
+    s += `<text x="${L_-5}" y="${(y(v)+3).toFixed(1)}" text-anchor="end">${v}</text>`;
+  }
+  // day separators + labels
+  D.times.forEach((t,i) => {
+    if (!t.endsWith('T00:00')) return;
+    s += `<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${T_}" y2="${H-8}" stroke="var(--line)" stroke-width="1"/>`;
+    if (i < n - 12) s += `<text class="daylbl" x="${(x(i)+4).toFixed(1)}" y="${H-8}">${fDay.format(asDate(t))}</text>`;
+  });
+  // past shade
+  s += `<rect x="${L_}" y="${T_}" width="${(x(D.nowIdx)-L_).toFixed(1)}" height="${H-T_-B_}" fill="var(--past)"/>`;
+  // gradient keyed to wind colour
+  const gid = 'wg';
+  const gStops = STOPS.map(([k,c]) => { const off = 1 - Math.min(1, conv(k)/yMax); return `<stop offset="${off.toFixed(3)}" stop-color="${c}"/>`; }).reverse().join('');
+  s = `<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="0" y1="${T_}" x2="0" y2="${H-B_}">${gStops}</linearGradient></defs>` + s;
+  // gust band
+  const up = gusts.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const dn = vals.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).reverse().join(' ');
+  s += `<polygon points="${up} ${dn}" fill="var(--muted)" opacity=".16"/>`;
+  s += `<polyline points="${up}" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity=".8"/>`;
+  // wind area + line
+  const line = vals.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  s += `<polygon points="${x(0)},${y(0)} ${line} ${x(n-1)},${y(0)}" fill="url(#${gid})" opacity=".35"/>`;
+  s += `<polyline points="${line}" fill="none" stroke="url(#${gid})" stroke-width="2.4" stroke-linejoin="round"/>`;
+  // direction arrows
+  const every = Math.max(3, Math.ceil(n / ((W-L_-R_)/15)));
+  for (let i = 0; i < n; i += every){
+    const d = h.wind_direction_10m[i]; if (d == null) continue;
+    s += `<g transform="translate(${x(i).toFixed(1)},${H-B_+16}) rotate(${(d+180)%360}) scale(.55)"><path d="${ARROW}" fill="${color(h.wind_speed_10m[i])}" stroke="var(--ink)" stroke-width="1.2"/></g>`;
+  }
+  // cursor
+  const cx = x(idx).toFixed(1);
+  s += `<line x1="${cx}" x2="${cx}" y1="${T_}" y2="${H-B_+4}" stroke="var(--ink)" stroke-width="1.2"/>`;
+  s += `<circle cx="${cx}" cy="${y(vals[idx]).toFixed(1)}" r="4.5" fill="${color(h.wind_speed_10m[idx])}" stroke="var(--ink)" stroke-width="1.5"/>`;
+  s += `<text x="${L_}" y="${T_-1}" style="font:500 9px var(--mono)" dy="0">${UNIT_LABEL[unit]}</text>`;
+  box.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Hourly wind forecast chart">${s}</svg>`;
+  const svg = box.firstChild;
+  const pick = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width;
+    stop(); setIdx(Math.round((px - L_) / ((W-L_-R_)/(n-1))));
+  };
+  svg.onpointerdown = ev => { pick(ev); svg.setPointerCapture(ev.pointerId); svg.onpointermove = pick; };
+  svg.onpointerup = svg.onpointercancel = () => { svg.onpointermove = null; };
+}
+
+function renderHours(){
+  const p = D.sea[sel], h = p.f.hourly, day = D.times[idx].slice(0,10);
+  $('#hoursTitle').textContent = 'Hour by hour · ' + fLong.format(asDate(D.times[idx]));
+  $('#hoursUnit').textContent = 'wind / gust ' + UNIT_LABEL[unit];
+  const cells = [];
+  D.times.forEach((t,i) => {
+    if (!t.startsWith(day)) return;
+    const v = valuesAt(p, i);
+    cells.push(`<button type="button" class="hour${i===idx?' cur':''}${i<D.nowIdx?' past':''}" data-i="${i}" aria-label="${t.slice(11)}: ${fmt(v.spd)} ${UNIT_LABEL[unit]} from ${dirName(v.dir)}">
+      <span class="h">${t.slice(11)}</span>${arrowSVG(v.dir, color(v.spd))}
+      <span class="s">${fmtShort(v.spd)}</span><span class="g">${fmtShort(v.gust)}</span>
+      <span class="w">${v.wave != null ? v.wave.toFixed(1)+'m' : ''}</span></button>`);
+  });
+  const el = $('#hours'), keep = el.scrollLeft;
+  el.innerHTML = cells.join('');
+  const cur = el.querySelector('.cur');
+  if (cur && (cur.offsetLeft < keep || cur.offsetLeft + cur.offsetWidth > keep + el.clientWidth)) el.scrollLeft = cur.offsetLeft - el.clientWidth/2 + cur.offsetWidth/2;
+  else el.scrollLeft = keep;
+}
+$('#hours').addEventListener('click', e => { const b = e.target.closest('.hour'); if (b){ stop(); setIdx(+b.dataset.i); } });
+
+/* ---------- Units ---------- */
+function syncUnits(){ document.querySelectorAll('#units button').forEach(b => b.setAttribute('aria-pressed', b.dataset.u === unit)); }
+$('#units').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  unit = b.dataset.u; store.set('seawind.unit', unit); syncUnits(); render(); renderLegend();
+});
+syncUnits(); renderLegend();
+
+/* ---------- Location ---------- */
+function setLocation(l, save = true){
+  loc = l; if (save) store.set('seawind.loc', l);
+  $('#place').textContent = l.name || fmtCoord(l);
+  stop(); load();
+}
+function locate(quiet){
+  if (!navigator.geolocation){ if (!quiet) status('Your browser does not share its location. Search for a place instead.', true); return; }
+  if (!quiet) status('Finding your location…');
+  navigator.geolocation.getCurrentPosition(
+    pos => setLocation({ lat:pos.coords.latitude, lon:pos.coords.longitude, name:'your location' }),
+    () => { if (!quiet) status('Location access was blocked. Allow it in your browser, or search for a place.', true); },
+    { enableHighAccuracy:false, timeout:10000, maximumAge:600000 }
+  );
+}
+$('#locate').addEventListener('click', () => locate(false));
+
+let searchT;
+$('#q').addEventListener('input', () => { clearTimeout(searchT); searchT = setTimeout(search, 300); });
+$('#searchForm').addEventListener('submit', e => { e.preventDefault(); search(true); });
+async function search(pickFirst){
+  const q = $('#q').value.trim(), ul = $('#results');
+  if (q.length < 2){ ul.hidden = true; return; }
+  try {
+    const j = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`);
+    const rs = j.results || [];
+    if (pickFirst === true && rs[0]) return choose(rs[0]);
+    ul.innerHTML = rs.length ? rs.map((r,i) => `<li><button type="button" data-i="${i}">${r.name} <small>${[r.admin1, r.country].filter(Boolean).join(', ')}</small></button></li>`).join('') : '<li style="padding:8px;color:var(--muted)">No places found</li>';
+    ul.hidden = false;
+    ul.onclick = e => { const b = e.target.closest('button'); if (b) choose(rs[+b.dataset.i]); };
+  } catch { ul.innerHTML = '<li style="padding:8px;color:var(--muted)">Search is unavailable right now</li>'; ul.hidden = false; }
+}
+function choose(r){
+  $('#results').hidden = true; $('#q').value = '';
+  setLocation({ lat:r.latitude, lon:r.longitude, name:r.name });
+}
+document.addEventListener('click', e => { if (!e.target.closest('.search')) $('#results').hidden = true; });
+
+/* ---------- Resize & refresh ---------- */
+let rT; addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => D && drawChart(), 150); });
+setInterval(() => { if (loc && !timer) load(); }, 30*60e3);
+
+/* ---------- Start ---------- */
+const saved = store.get('seawind.loc');
+if (saved && typeof saved.lat === 'number'){
+  setLocation(saved, false);
+} else {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  setLocation(TZ_DEFAULT[tz] || TZ_DEFAULT['Europe/Amsterdam'], false);
+  locate(true);
+}
+})();
+</script>
+</body>
+</html>
